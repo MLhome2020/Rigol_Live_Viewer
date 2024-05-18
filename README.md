@@ -2,6 +2,7 @@
 
 ## Description
 This project is a simple live viewer for a connected Rigol DS2072 Oscilloscope, implemented using PySide6 and PyQtGraph. The primary objective was to demonstrate the concept, with a target device of a LeCroy oscilloscope in mind.
+
 ![Screenshot of the application.](docs/Main%20Screen.JPG)
 
 
