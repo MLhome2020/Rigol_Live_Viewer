@@ -65,7 +65,7 @@ getData_online(): Fetches waveform data from the oscilloscope.
 
 Disconnect_scope(): Stops the connection and closes the resource manager.
 
-Rigol_Live
+### Rigol_Live
 
 connect_tool(): Initiates the connection to the oscilloscope.
 
