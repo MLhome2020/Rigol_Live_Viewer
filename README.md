@@ -2,6 +2,8 @@
 
 ## Description
 This project is a simple live viewer for a connected Rigol DS2072 Oscilloscope, implemented using PySide6 and PyQtGraph. The primary objective was to demonstrate the concept, with a target device of a LeCroy oscilloscope in mind.
+![Screenshot of the application.](docs/Main%20Screen.JPG)
+
 
 ## Contents
 README.md: This readme file.
@@ -13,15 +15,17 @@ V1.0 - Initial prototype viewer
 2024-05-18: V1.0 - First prototype viewer
 
 ## Requirements
-Python 3.x
-PySide6
-PyQtGraph
-PyVISA
+- Python 3.x
+- PySide6
+- PyQtGraph
+- PyVISA
 
 ## Installation
 
 Install the required packages using pip:
+```
 pip install pyvisa PySide6 pyqtgraph
+```
 
 ## Usage
 To start the application, run the Rigol_Live_View.py script:
