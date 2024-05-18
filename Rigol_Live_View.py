@@ -3,7 +3,7 @@ Autor:  MLHome2020
 Date:   18.05.2024
 
 Descr.: Simple PySide6 Live Viewer of a connected Rigol DS2072 Oscilloscope.
-        This was just a prove of concept the target oscilloscope is a LeCroy
+        This was just a prove of concept.
 
 Rigol Live View
 ├── README
