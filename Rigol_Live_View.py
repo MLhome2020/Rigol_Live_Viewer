@@ -19,8 +19,10 @@ import pyvisa           #pip install pyvisa
 import time
 import numpy as np
 import sys
+import io
+from PIL import Image
 
-from PySide6.QtWidgets  import (QApplication,QMainWindow,QInputDialog,QComboBox,
+from PySide6.QtWidgets  import (QApplication,QMainWindow,QInputDialog,QComboBox,QLabel,
                                QSizePolicy,QLineEdit,QGraphicsView,QGraphicsScene,QPushButton, 
                                QDialogButtonBox, QStyle, QWidget, QFileDialog, QStatusBar,
                                 QFileDialog,QTreeWidgetItemIterator,QMenu, QToolBar, QDialog, QTableWidget, 
@@ -36,6 +38,32 @@ from PySide6.QtCore     import (QByteArray,QTimer,QIODevice,QFile,QObject,QThrea
 #For realtime graph we use pyqtgraph
 import pyqtgraph as pg
 from pyqtgraph import AxisItem
+
+
+class ImageDialog(QDialog):
+    def __init__(self, image_path):
+        super().__init__()
+        self.setWindowTitle("Image Viewer")
+        #self.setModal(True)  # Set the dialog to be modal
+        
+        layout = QVBoxLayout()
+
+        image_label = QLabel()
+        pixmap = QPixmap(image_path)
+        if pixmap.isNull():
+            print("Error loading image:", image_path)
+        else:
+            # Scale the pixmap by 1.5 times
+            #scaled_pixmap = pixmap
+            scaled_pixmap = pixmap.scaled(pixmap.width() * 2, pixmap.height() * 2)
+            image_label.setPixmap(scaled_pixmap)
+            layout.addWidget(image_label)
+
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(self.accept)  # Close the dialog when OK is clicked
+        layout.addWidget(ok_button)
+
+        self.setLayout(layout)
 
 #we use a similar Data structure as used by lecroyparser
 class ScopeData_nativ():
@@ -72,23 +100,27 @@ class Rigol_get_Data(QThread):
     data_receivedCH1 = Signal(ScopeData_nativ)
     data_receivedCH2 = Signal(ScopeData_nativ)
     Statustext = Signal(str)
+   
 
     def __init__(self):
         super().__init__()
+        self._is_running = True
         self.scope = None
         self.rm = None
         self.stop_connection = False
+        self.Livedata = False
         self.Scope_wave = {}
 
     def run(self):
         # Simulate some intensive computation
-        while True:
+        while self._is_running:
             while self.scope is not None:
-                self.getData_online()
-                #print("Receiving data...")
-                self.data_receivedCH1.emit(self.Scope_wave['CHAN1'])
-                self.data_receivedCH2.emit(self.Scope_wave['CHAN2'])
-                #self.emit_status("Receiving data...")  # Emit status message
+                if self.Livedata:
+                    self.getData_online()
+                    #print("Receiving data...")
+                    self.data_receivedCH1.emit(self.Scope_wave['CHAN1'])
+                    self.data_receivedCH2.emit(self.Scope_wave['CHAN2'])
+                    #self.emit_status("Receiving data...")  # Emit status message
 
                 #print("Emited.")
                 if self.stop_connection == True:
@@ -103,18 +135,20 @@ class Rigol_get_Data(QThread):
             
         self.finished.emit()
 
+    def stop(self):
+        self.disconnect_scope()
+        self._is_running = False
+
     def emit_status(self, message):
         self.Statustext.emit(message)  # Emit the Statustext signal with a message
 
-
-    def Disconnect_scope(self):
+    def disconnect_scope(self):
         self.stop_connection = True
-        
         
     def connect_scope_ADR(self,ADR):
         self.rm = pyvisa.ResourceManager()
         try:
-            self.scope = self.rm.open_resource(ADR, timeout=10000 ,chunk_size=20*1024,write_termination = '\n', read_termination = '\n',)
+            self.scope = self.rm.open_resource(ADR, timeout=12000)  #chunk_size=20*1024,write_termination = '\n', read_termination = '\n',
             self.stop_connection = False
             print(f"Successfull connected by PyVISA with {ADR}")
             return self.scope
@@ -122,6 +156,18 @@ class Rigol_get_Data(QThread):
             print("Connect fail!")
             return None
    
+    def take_screenshot(self):
+        if self.scope is not None:
+            file_name = "New_Screen.png"
+            #self.scope.write(":DISP:DATA?")
+            #bmpdata = self.scope.query_binary_values(':DISP:DATA? ON,0,PNG', datatype='B')
+            bmp_bin = self.scope.query_binary_values(':DISP:DATA?', datatype='B', container=bytes)
+            #bmpdata = self.scope.read_raw()[2+9:]
+            img = Image.open(io.BytesIO(bmp_bin))
+            img.save(file_name)
+            self.emit_status(f"Screenshot captured saved to {file_name}")  # Emit status message
+
+
     def getData_online(self):
         channels = ['CHAN1','CHAN2']
           
@@ -181,6 +227,9 @@ class Rigol_get_Data(QThread):
     
 
 class Rigol_Live(QMainWindow):
+    closed = Signal()
+
+
     def __init__(self):
         super().__init__()
         self.scope = None
@@ -188,7 +237,8 @@ class Rigol_Live(QMainWindow):
         self.plotitem  = None
         self.plotdataitem = None
         self.Scope_wave = {}
-
+        self.ScreenViewer = None
+        
         self.resize(1000, 600)
 
         # Create menu bar
@@ -224,6 +274,12 @@ class Rigol_Live(QMainWindow):
         self.connection_combo.setInsertPolicy(QComboBox.NoInsert)
         self.statusBar().addPermanentWidget(self.connection_combo)
 
+        # Create a button
+        self.btn_screenshot = QPushButton("Screenshot", self)
+        # Connect the button's clicked signal to a slot
+        self.btn_screenshot.clicked.connect(self.initiate_screenshot)
+        self.statusBar().addPermanentWidget(self.btn_screenshot)
+
         add_connection_action = QAction(QIcon(), 'Add Connection', self)
         add_connection_action.triggered.connect(self.add_connection_string)
         toolMenu.addAction(add_connection_action)
@@ -237,8 +293,11 @@ class Rigol_Live(QMainWindow):
             self.plotitem = self.LiveG_win.addPlot(title="PyQtGraph Test") 
             pg.setConfigOptions(antialias=True,useOpenGL=True)
             self.LiveG_win.resize(self.size())  # Resize LiveG_win to match QMainWindow size
-            
+        
+        # Create and start the thread
+        self.thread = QThread()
         self.Rigol_thread = Rigol_get_Data()
+        self.Rigol_thread.moveToThread(self.thread)
         self.Rigol_thread.finished.connect(self.on_worker_finished)
         self.Rigol_thread.data_receivedCH1.connect(self.receive_dataCH1)
         self.Rigol_thread.data_receivedCH2.connect(self.receive_dataCH2)
@@ -247,7 +306,25 @@ class Rigol_Live(QMainWindow):
         #Try to connect with first connection 
         self.connect_tool()
 
-    
+    def initiate_screenshot(self):
+        #self.Disconnect_tool()
+        #connection_string = self.connection_combo.currentText()
+        self.statusBar().showMessage(f'Get screenshot',3000)
+        #self.Rigol_thread.connect_scope_ADR(connection_string)
+        self.Rigol_thread.Livedata = False
+        time.sleep(0.35)
+        
+        self.Rigol_thread.take_screenshot()
+
+        self.statusBar().showMessage(f'Get screenshot captured',3000)
+        self.Rigol_thread.Livedata = True
+
+        #Show the image
+        image_path = "New_Screen.png"
+        self.ScreenViewer = ImageDialog(image_path)
+        self.ScreenViewer.show()
+
+
     def add_connection_string(self):
         text, ok = QInputDialog.getText(self, 'Add Connection String', 'Enter new connection string:')
         if ok and text:
@@ -255,8 +332,9 @@ class Rigol_Live(QMainWindow):
 
     def connect_tool(self):
         connection_string = self.connection_combo.currentText()
-        self.statusBar().showMessage(f'Connecting to {connection_string}',3000)
+        self.statusBar().showMessage(f'Connecting to {connection_string}',5000)
         self.Rigol_thread.connect_scope_ADR(connection_string)
+        self.Rigol_thread.Livedata = True
 
         self.pqTimer = QTimer()
         self.pqTimer.timeout.connect(self.plot_channel)
@@ -265,7 +343,7 @@ class Rigol_Live(QMainWindow):
 
     def Disconnect_tool(self):
         print("Disconnect")
-        self.Rigol_thread.Disconnect_scope()
+        self.Rigol_thread.disconnect_scope()
         self.statusBar().showMessage(f'Disconnected.')
 
    
@@ -297,11 +375,12 @@ class Rigol_Live(QMainWindow):
 
 
     def plot_channel(self):
-        #state =  self.getData_online()
-        max_x = np.max(self.Scope_wave['CHAN1'].x)
-        min_x = np.min(self.Scope_wave['CHAN1'].x)
         
-        if "CHAN1" in self.Scope_wave:
+        if "CHAN1" in self.Scope_wave and "CHAN2" in self.Scope_wave:
+            #state =  self.getData_online()
+            max_x = np.max(self.Scope_wave['CHAN1'].x)
+            min_x = np.min(self.Scope_wave['CHAN1'].x)
+            
             max_x_last = max_x
             min_x_last = min_x
             
@@ -402,8 +481,20 @@ class Rigol_Live(QMainWindow):
             i += step
         yield i, end
 
-    def on_exit(self,ev):
-        ev.accept()
+    def closeEvent(self, event):
+        self.on_exit(event)
+
+    def on_exit(self,event):
+        # Stop the worker thread
+        self.Rigol_thread.stop()
+        
+        # Wait for the thread to finish
+        self.thread.wait()
+        
+        # Accept the close event
+        event.accept()
+        
+        # Emit the closed signal if needed
         self.closed.emit()
 
 
