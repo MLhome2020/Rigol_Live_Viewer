@@ -450,32 +450,31 @@ class Rigol_Live(QMainWindow):
                 self.setCentralWidget(self.LiveG_win)
                 self.LiveG_win.resize(self.size())  # Resize LiveG_win to match QMainWindow size
 
- 
                 self.plotitem = self.LiveG_win.addPlot(title="PyQtGraph Test") 
                 pg.setConfigOptions(antialias=True,useOpenGL=True)
-                # Show grid
                 self.plotitem.showGrid(x=True, y=True, alpha=0.5)
 
-
-                
                 # Initialize the plot items
                 self.plotdataitem = self.plotitem.plot(x=x, y=y1, pen='y'  ) 
                 self.plotdataitem1 = self.plotitem.plot(x=x, y=y2,  pen='c') 
                 self.plotitem.setXRange(min_x, max_x)
                
-                self.plotitem.showAxis('bottom')
-                axB = self.plotitem.getAxis('bottom')
-                axB.setLabel('Time', color='red',units='s')       #,units='s'
-                
-                self.plotitem.showAxis('left')
-                axL = self.plotitem.getAxis('left')
-               
-                axL.setLabel('CHAN1', color='y',units='V',alpha=1)           # units='V'
-                
+
+
+                # Add a second y-axis on the right
                 self.plotitem.showAxis('right')
-                axR = self.plotitem.getAxis('right')
-                axR.setLabel('CHAN2', color='c')            # units='V'
-          
+                ax2 = AxisItem(orientation='right')
+                self.plotitem.scene().addItem(ax2)
+                self.plotitem.getAxis('right').linkToView(self.plotitem.getViewBox())
+                
+                self.plotitem.getAxis('left').setLabel('CHAN1', color='yellow',units='V')  #color in short form does not work ! y
+                self.plotitem.getAxis('right').setLabel('CHAN2', color='cyan',units='V')#color in short form does not work ! c
+                self.plotitem.getAxis('bottom').setLabel('Time', color='red',units='s')
+                # Set Y Range for right axis (for y2 data)
+                self.plotitem.getAxis('right').setRange(min(y2), max(y2))
+                # Show grid for both axes
+                #self.plotitem.showGrid(x=True, y=True, alpha=1)
+
                 self.plotitem.setYRange(-10, 10)
                 self.plotitem.setYRange(min(y1), max(y1))
                 
@@ -500,6 +499,8 @@ class Rigol_Live(QMainWindow):
                 self.plotdataitem.setData(x=x, y=y1)
                 self.plotdataitem1.setData(x=x, y=y2)
 
+                #self.plotitem.getAxis('left').setLabel('CHAN1', color='y',units='m',alpha=1)
+                #self.plotitem.getAxis('right').setLabel('CHAN2', color='c',units='m',alpha=1)  
                 
         else:
             print("NoDATA")
