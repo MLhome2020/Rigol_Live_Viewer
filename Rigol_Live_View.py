@@ -21,6 +21,9 @@ import numpy as np
 import sys
 import io
 from PIL import Image
+import lecroyparser
+
+
 
 from PySide6.QtWidgets  import (QApplication,QMainWindow,QInputDialog,QComboBox,QLabel,
                                QSizePolicy,QLineEdit,QGraphicsView,QGraphicsScene,QPushButton, 
@@ -38,6 +41,7 @@ from PySide6.QtCore     import (QByteArray,QTimer,QIODevice,QFile,QObject,QThrea
 #For realtime graph we use pyqtgraph
 import pyqtgraph as pg
 from pyqtgraph import AxisItem
+import lecroyparser
 
 
 class ImageDialog(QDialog):
@@ -68,11 +72,13 @@ class ImageDialog(QDialog):
 #we use a similar Data structure as used by lecroyparser
 class ScopeData_nativ():
     def __init__(self):
-        self.path = ""
+        self.path = "--"
         self.x = []
         self.y = []
+        self.commOrder = ""
         self.endianness = "<"
         self.instrumentName = "Native"
+        self.nominalBits = "8"
         self.instrumentNumber = 1
         self.templateName =""
         self.waveSource = ""
@@ -80,20 +86,40 @@ class ScopeData_nativ():
         self.verticalCoupling = ""
         self.verticalGain = 1
         self.verticalOffset = 0
+        self.vertUnit = ""
         self.bandwidthLimit = ""
         self.recordType  = ""
         self.processingDone = ""
         self.timeBase = ""
-        self.vertUnit = ""
-        
         self.triggerTime = ""
         self.horizInterval = 1
         self.horizOffset = 0
         self.zerocross = 0.0
 
-        self.y = [] 
-        self.x = [] 
 
+    def __repr__(self):
+        string = f"Scope Data {self.waveSource}\n"
+        string += "  Path: " + self.path + "\n"
+        string += "  Endianness: " + self.endianness + "\n"
+        string += "  Instrument: " + self.instrumentName + "\n"
+        string += "  Instrument Number: " + str(self.instrumentNumber) + "\n"
+        string += "  Template Name: " + self.templateName + "\n"
+        string += "  Channel: " + self.waveSource + "\n"
+        string += "  WaveArrayCount: " + str(self.waveArrayCount) + "\n"
+        string += "  Vertical Coupling: " + self.verticalCoupling + "\n"
+        string += "  verticalGain: " + str(self.verticalGain) + "/div \n"
+        string += "  verticalOffset: " + str(self.verticalOffset) + "\n"
+        string += "  vertUnit: " + self.vertUnit + "\n"
+        string += "  Bandwidth Limit: " + self.bandwidthLimit + "\n"
+        string += "  Record Type: " + self.recordType + "\n"
+        string += "  Processing: " + self.processingDone + "\n"
+        string += "  TimeBase: " + self.timeBase + "\n"
+        string += "  TriggerTime: " + self.triggerTime + "\n"
+        string += "  NominalBits: " + str(self.nominalBits) + "\n"
+        string += "  HorizInterval: " + str(self.horizInterval) + "\n"
+        string += "  horizOffset: " + str(self.horizOffset) + "\n"
+        
+        return string
 
 class Rigol_get_Data(QThread):
     finished = Signal()
@@ -158,7 +184,7 @@ class Rigol_get_Data(QThread):
    
     def take_screenshot(self):
         if self.scope is not None:
-            file_name = "New_Screen.png"
+            file_name = "New_Screen.bmp"
             #self.scope.write(":DISP:DATA?")
             #bmpdata = self.scope.query_binary_values(':DISP:DATA? ON,0,PNG', datatype='B')
             bmp_bin = self.scope.query_binary_values(':DISP:DATA?', datatype='B', container=bytes)
@@ -190,39 +216,49 @@ class Rigol_get_Data(QThread):
            
             all_data = self.scope.query_binary_values(":WAV:DATA?", datatype='B',is_big_endian=True)
             
-        
-            
             # Query waveform parameters
             x_increment = self.scope.query_ascii_values(':WAV:XINC?', converter='f')[0]
             x_origin    = self.scope.query_ascii_values(':WAV:XOR?', converter='f')[0]
             y_increment = self.scope.query_ascii_values(':WAV:YINC?', converter='f')[0]
             y_origin    = self.scope.query_ascii_values(':WAV:YOR?', converter='f')[0]
+            
 
-            vscale      = self.scope.query_ascii_values(f':{channel}:SCALe?', converter='f')[0]
+            Probe       = self.scope.query_ascii_values(f':{channel}:PROB?', converter='f')[0]
+            vcoupling   = self.scope.query_ascii_values(f':{channel}:COUPling?', converter='s')[0].strip()
             voffset     = self.scope.query_ascii_values(f':{channel}:OFFSet?', converter='f')[0]
-           
+            vscale      = self.scope.query_ascii_values(f':{channel}:SCALe?', converter='f')[0]
+            BWlimit     = self.scope.query_ascii_values(f':{channel}:BWLimit?', converter='s')[0].strip()
+            vUnits      = self.scope.query_ascii_values(f':{channel}:UNITs?', converter='s')[0].strip()
+            
+            self.Scope_wave[channel].waveSource =  channel
+            self.Scope_wave[channel].waveArrayCount = len(all_data)
+            self.Scope_wave[channel].horizInterval = x_increment
+            self.Scope_wave[channel].horUnit = "s"
+            self.Scope_wave[channel].horizOffset = x_origin
+            self.Scope_wave[channel].path = "--"
+            self.Scope_wave[channel].verticalCoupling = vcoupling
+            self.Scope_wave[channel].verticalOffset = voffset
+            self.Scope_wave[channel].verticalGain = vscale
+            self.Scope_wave[channel].bandwidthLimit = BWlimit
+            self.Scope_wave[channel].vertUnit = vUnits
+            
             # Create time and
             time_array = np.arange(len(all_data)) * x_increment + x_origin
             
             # Asolut voltage
-            voltage_array = (np.array(all_data) - 128) * 10 * vscale / 256 - voffset + y_increment
+            #voltage_array = ((np.array(all_data) - 128) * 10 * vscale / 256)  + y_increment
             
             # Absolt Voltage but with y_origin acc oscilloscope screen
-            voltage_array = y_origin + ((np.array(all_data) - 128) * 10 * vscale / 256 - voffset + y_increment)
-            
-            self.Scope_wave[channel].waveArrayCount = len(time_array)
-
-            self.Scope_wave[channel].horizInterval = x_increment
-            self.Scope_wave[channel].horUnit = "s"
-            self.Scope_wave[channel].horizOffset = x_origin
-            self.Scope_wave[channel].path = ""
-            self.Scope_wave[channel].vertUnit = "V"
+            #voltage_array = y_origin + ((np.array(all_data) - 128) * 10 * vscale / 256 - voffset + y_increment) # Old Firmware
+            voltage_array = (((np.array(all_data) - 128) * 10 * vscale / 256 ) - voffset ) # - voffset + y_increment Old Firmware
             
             self.Scope_wave[channel].x = time_array
             self.Scope_wave[channel].y = voltage_array
+
             self.emit_status(f"{(time.time() - start_time):.2f}s Normal Read CH:{channel} {len(all_data)} points")  # Emit status message
             
-        #scope.close()
+        print(print(self.Scope_wave['CHAN1']))
+        print(print(self.Scope_wave['CHAN2']))
         return True
     
 
@@ -238,6 +274,7 @@ class Rigol_Live(QMainWindow):
         self.plotdataitem = None
         self.Scope_wave = {}
         self.ScreenViewer = None
+        self.plot_abs = True
         
         self.resize(1000, 600)
 
@@ -266,19 +303,27 @@ class Rigol_Live(QMainWindow):
 
         self.connection_combo = QComboBox(self)
         self.connection_combo.addItems([
-            "TCPIP0::192.168.1.23::inst0::INSTR",
-            "TCPIP0::192.168.1.23::5555::SOCKET",
+            "TCPIP0::192.168.1.30::inst0::INSTR",
+            "TCPIP0::192.168.1.30::5555::SOCKET",
             "USB0::0x1AB1::0x04B0::DS2A153502286::INSTR"
         ])
         self.connection_combo.setEditable(True)
         self.connection_combo.setInsertPolicy(QComboBox.NoInsert)
         self.statusBar().addPermanentWidget(self.connection_combo)
 
-        # Create a button
+        # Create a Screenshot button
         self.btn_screenshot = QPushButton("Screenshot", self)
         # Connect the button's clicked signal to a slot
         self.btn_screenshot.clicked.connect(self.initiate_screenshot)
         self.statusBar().addPermanentWidget(self.btn_screenshot)
+
+        # Create a Display switch button to have absolute display or with offset acc scope 
+        self.btn_absolut = QPushButton("Absolut", self)
+        self.btn_absolut.setCheckable(True)
+        self.btn_absolut.setChecked(True)
+        # Connect the button's clicked signal to a slot
+        self.btn_absolut.clicked.connect(self.plot_Absolut)
+        self.statusBar().addPermanentWidget(self.btn_absolut)
 
         add_connection_action = QAction(QIcon(), 'Add Connection', self)
         add_connection_action.triggered.connect(self.add_connection_string)
@@ -286,13 +331,13 @@ class Rigol_Live(QMainWindow):
 
 
         #check if a pyqtgraph already has been cretaed if not create one QWindow
-        if self.LiveG_win is None:
-            #self.LiveG = QApplication([])
-            self.LiveG_win = pg.GraphicsLayoutWidget()
-            self.setCentralWidget(self.LiveG_win)
-            self.plotitem = self.LiveG_win.addPlot(title="PyQtGraph Test") 
-            pg.setConfigOptions(antialias=True,useOpenGL=True)
-            self.LiveG_win.resize(self.size())  # Resize LiveG_win to match QMainWindow size
+        #if self.LiveG_win is None:
+        #    #self.LiveG = QApplication([])
+        #    self.LiveG_win = pg.GraphicsLayoutWidget()
+        #    self.setCentralWidget(self.LiveG_win)
+        #    self.plotitem = self.LiveG_win.addPlot(title="PyQtGraph Test") 
+        #    pg.setConfigOptions(antialias=True,useOpenGL=True)
+        #    self.LiveG_win.resize(self.size())  # Resize LiveG_win to match QMainWindow size
         
         # Create and start the thread
         self.thread = QThread()
@@ -305,6 +350,13 @@ class Rigol_Live(QMainWindow):
         self.Rigol_thread.start()
         #Try to connect with first connection 
         self.connect_tool()
+
+    def plot_Absolut(self,checked):
+        print(checked)
+        if checked:
+            self.plot_abs = True
+        else:
+            self.plot_abs = False
 
     def initiate_screenshot(self):
         #self.Disconnect_tool()
@@ -375,62 +427,69 @@ class Rigol_Live(QMainWindow):
 
 
     def plot_channel(self):
-        
         if "CHAN1" in self.Scope_wave and "CHAN2" in self.Scope_wave:
-            #state =  self.getData_online()
             max_x = np.max(self.Scope_wave['CHAN1'].x)
             min_x = np.min(self.Scope_wave['CHAN1'].x)
-            
             max_x_last = max_x
             min_x_last = min_x
-            
-            # (Optional) Add some data to the plots (replace with your data)
-            x = self.Scope_wave['CHAN1'].x   #self.channels['CHAN1'].x
-            y1 = self.Scope_wave['CHAN1'].y #self.channels['CHAN1'].y
-            y2 = self.Scope_wave['CHAN2'].y #self.channels['CHAN2'].y
 
-            #check if a pyqtgraph already has been cretaed if not create one QWindow
+            voffset_CH1 = self.Scope_wave['CHAN1'].verticalOffset
+            voffset_CH2 = self.Scope_wave['CHAN2'].verticalOffset
+            x = self.Scope_wave['CHAN1'].x  
+            if self.plot_abs:
+                y1 = self.Scope_wave['CHAN1'].y    
+                y2 = self.Scope_wave['CHAN2'].y  
+            else:
+                y1 = self.Scope_wave['CHAN1'].y + voffset_CH1 
+                y2 = self.Scope_wave['CHAN2'].y + voffset_CH2 
+
+
             if self.LiveG_win is None:
+
                 self.LiveG_win = pg.GraphicsLayoutWidget()
+                self.setCentralWidget(self.LiveG_win)
+                self.LiveG_win.resize(self.size())  # Resize LiveG_win to match QMainWindow size
+
+ 
                 self.plotitem = self.LiveG_win.addPlot(title="PyQtGraph Test") 
-                
                 pg.setConfigOptions(antialias=True,useOpenGL=True)
+                # Show grid
+                self.plotitem.showGrid(x=True, y=True, alpha=0.5)
 
-            if self.plotdataitem is None:
-                #Faster
-                self.plotdataitem = self.plotitem.plot(x=x, y=y1, pen='y'  ) #, symbolBrush=(255,0,0), symbolSize=5, symbolPen=None)
-                self.plotdataitem1 = self.plotitem.plot(x=x, y=y2,  pen='c') #, symbolBrush=(255,200,0), symbolSize=5, symbolPen=None)
-                #Slower when we do width lines larger as 1
-                #self.plotdataitem = self.plotitem.plot(x=x, y=y1, pen={'color': (200, 150, 0),'width':2}, symbol=None)
-                #self.plotdataitem1 = self.plotitem.plot(x=x, y=y2, pen={'color': 'b', 'width': 2}, symbol=None)
+
                 
-                # Set X Range
+                # Initialize the plot items
+                self.plotdataitem = self.plotitem.plot(x=x, y=y1, pen='y'  ) 
+                self.plotdataitem1 = self.plotitem.plot(x=x, y=y2,  pen='c') 
                 self.plotitem.setXRange(min_x, max_x)
-                # Set Y Range for left axis
-                self.plotitem.setYRange(-10, 10)
-
-                # Add a second y-axis on the right
-                self.plotitem.showAxis('right')
+               
                 self.plotitem.showAxis('bottom')
-
-                num_samples = 1400
-                custom_ticks = [(i, str(i)) for i in range(num_samples)]
-    
-                self.plotitem.getAxis('left').setLabel('CHAN1', color='y',units='V')
-                self.plotitem.getAxis('left').linkToView(self.plotitem.getViewBox())
-                self.plotitem.getAxis('right').setLabel('CHAN2', color='c',units='V')
-                self.plotitem.getAxis('right').linkToView(self.plotitem.getViewBox())
-
-                self.plotitem.getAxis('bottom').setLabel('Time', color='red',units='s')
-                # Set Y Range for right axis (for y2 data)
-                self.plotitem.getAxis('left').setRange(min(y1), max(y1))
-                self.plotitem.getAxis('right').setRange(min(y2), max(y2))
+                axB = self.plotitem.getAxis('bottom')
+                axB.setLabel('Time', color='red',units='s')       #,units='s'
+                
+                self.plotitem.showAxis('left')
+                axL = self.plotitem.getAxis('left')
+               
+                axL.setLabel('CHAN1', color='y',units='V',alpha=1)           # units='V'
+                
+                self.plotitem.showAxis('right')
+                axR = self.plotitem.getAxis('right')
+                axR.setLabel('CHAN2', color='c')            # units='V'
+          
+                self.plotitem.setYRange(-10, 10)
+                self.plotitem.setYRange(min(y1), max(y1))
+                
                 # Show grid for both axes
-                self.plotitem.showGrid(x=True, y=True, alpha=1)
+                self.plotitem.showGrid(x=True, y=True, alpha=0.3)
 
                 self.LiveG_win.raise_()
                 self.LiveG_win.show()
             else:
+                if max_x != max_x_last or min_x != min_x_last:
+                    max_x_last = max_x
+                    min_x_last = min_x
+                    self.plotitem.setXRange(min_x, max_x)
+
                 #update x range to see full range only if the 
                 if max_x != max_x_last or min_x != min_x_last:
                     max_x_last = max_x
@@ -440,8 +499,11 @@ class Rigol_Live(QMainWindow):
                 self.plotitem.setTitle(f"PyQtGraph Test {len(self.Scope_wave['CHAN1'].x)}")
                 self.plotdataitem.setData(x=x, y=y1)
                 self.plotdataitem1.setData(x=x, y=y2)
+
+                
         else:
             print("NoDATA")
+
 
     def wait_ready(self,instrument):
         #instrument.write("*OPC")
@@ -500,6 +562,7 @@ class Rigol_Live(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
     Rigol_View = Rigol_Live()
     Rigol_View.show()
    
